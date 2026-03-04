@@ -8,7 +8,7 @@ Usage:
     python wow_dashboard.py
 
 Output:
-    wow_dashboard.html
+    index.html
 """
 
 import psycopg2
@@ -30,7 +30,7 @@ DB_CONFIG = {
 QUERY = """
 WITH weekly AS (
     SELECT
-        DATE_TRUNC('week', "Date"::date) AS week_start,
+        DATE_TRUNC('week', "Date"::date) + INTERVAL '6 days' AS week_ending,
         "Country",
         "Platform Granular",
         COUNT(*) AS post_count,
@@ -45,24 +45,24 @@ WITH weekly AS (
 wow AS (
     SELECT
         w.*,
-        LAG(post_count) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_start) AS prev_post_count,
-        LAG(total_impressions) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_start) AS prev_impressions,
-        LAG(avg_impressions_per_post) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_start) AS prev_avg,
-        post_count - LAG(post_count) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_start) AS post_count_change,
-        total_impressions - LAG(total_impressions) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_start) AS impressions_change,
+        LAG(post_count) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_ending) AS prev_post_count,
+        LAG(total_impressions) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_ending) AS prev_impressions,
+        LAG(avg_impressions_per_post) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_ending) AS prev_avg,
+        post_count - LAG(post_count) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_ending) AS post_count_change,
+        total_impressions - LAG(total_impressions) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_ending) AS impressions_change,
         ROUND(
-            100.0 * (total_impressions - LAG(total_impressions) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_start))
-            / NULLIF(LAG(total_impressions) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_start), 0)
+            100.0 * (total_impressions - LAG(total_impressions) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_ending))
+            / NULLIF(LAG(total_impressions) OVER (PARTITION BY "Country", "Platform Granular" ORDER BY week_ending), 0)
         , 2) AS impressions_pct_change
     FROM weekly w
 )
 SELECT
-    week_start, "Country", "Platform Granular",
+    week_ending, "Country", "Platform Granular",
     post_count, total_impressions, avg_impressions_per_post,
     prev_post_count, prev_impressions,
     post_count_change, impressions_change, impressions_pct_change
 FROM wow
-ORDER BY "Country", "Platform Granular", week_start DESC
+ORDER BY "Country", "Platform Granular", week_ending DESC
 """
 
 
@@ -335,9 +335,9 @@ function go(){{
   }});
 
   if(wk>0){{
-    const allW=[...new Set(filtered.map(r=>r.week_start))].sort().reverse().slice(0,wk);
+    const allW=[...new Set(filtered.map(r=>r.week_ending))].sort().reverse().slice(0,wk);
     const ws=new Set(allW);
-    filtered=filtered.filter(r=>ws.has(r.week_start));
+    filtered=filtered.filter(r=>ws.has(r.week_ending));
   }}
 
   renderKPIs();renderAggregate();renderPlatform();renderCountry();renderAnomalies();renderRaw();
@@ -346,20 +346,20 @@ function go(){{
 // ── Week aggregation helpers ──
 function aggByWeek(d){{
   const m={{}};
-  d.forEach(r=>{{const w=r.week_start;if(!m[w])m[w]={{w,imp:0,posts:0}};m[w].imp+=(r.total_impressions||0);m[w].posts+=(r.post_count||0)}});
+  d.forEach(r=>{{const w=r.week_ending;if(!m[w])m[w]={{w,imp:0,posts:0}};m[w].imp+=(r.total_impressions||0);m[w].posts+=(r.post_count||0)}});
   return Object.values(m).sort((a,b)=>a.w.localeCompare(b.w));
 }}
 
 function groupByDimWeek(d,dim){{
   const m={{}};
-  d.forEach(r=>{{const k=r[dim]||'Unknown',w=r.week_start;if(!m[k])m[k]={{}};m[k][w]=(m[k][w]||0)+(r.total_impressions||0)}});
+  d.forEach(r=>{{const k=r[dim]||'Unknown',w=r.week_ending;if(!m[k])m[k]={{}};m[k][w]=(m[k][w]||0)+(r.total_impressions||0)}});
   return m;
 }}
 
 function latestWowByDim(d,dim){{
   // For each dimension value, get latest 2 weeks and compute wow%
   const byDim={{}};
-  d.forEach(r=>{{const k=r[dim]||'Unknown';if(!byDim[k])byDim[k]={{}};const w=r.week_start;byDim[k][w]=(byDim[k][w]||0)+(r.total_impressions||0)}});
+  d.forEach(r=>{{const k=r[dim]||'Unknown';if(!byDim[k])byDim[k]={{}};const w=r.week_ending;byDim[k][w]=(byDim[k][w]||0)+(r.total_impressions||0)}});
   const result=[];
   Object.entries(byDim).forEach(([k,wks])=>{{
     const sorted=Object.entries(wks).sort((a,b)=>b[0].localeCompare(a[0]));
@@ -429,7 +429,7 @@ function renderAggregate(){{
 // ══════ PLATFORM BREAKDOWN ══════
 function renderPlatform(){{
   const byPlat=groupByDimWeek(filtered,'Platform Granular');
-  const allWks=[...new Set(filtered.map(r=>r.week_start))].sort();
+  const allWks=[...new Set(filtered.map(r=>r.week_ending))].sort();
   const names=Object.keys(byPlat).sort();
 
   dc('c4');
@@ -449,7 +449,7 @@ function renderPlatform(){{
 // ══════ COUNTRY BREAKDOWN ══════
 function renderCountry(){{
   const byCo=groupByDimWeek(filtered,'Country');
-  const allWks=[...new Set(filtered.map(r=>r.week_start))].sort();
+  const allWks=[...new Set(filtered.map(r=>r.week_ending))].sort();
   const names=Object.keys(byCo).sort();
 
   dc('c7');
@@ -480,8 +480,8 @@ function renderAnomalies(){{
 
   // Scatter timeline
   dc('c10');
-  const dropPts=drops.map(r=>({{x:r.week_start,y:r.impressions_pct_change,r:Math.min(Math.abs(r.impressions_pct_change)/5,20),label:r.Country+' · '+r['Platform Granular']}}));
-  const spikePts=spikes.map(r=>({{x:r.week_start,y:r.impressions_pct_change,r:Math.min(Math.abs(r.impressions_pct_change)/5,20),label:r.Country+' · '+r['Platform Granular']}}));
+  const dropPts=drops.map(r=>({{x:r.week_ending,y:r.impressions_pct_change,r:Math.min(Math.abs(r.impressions_pct_change)/5,20),label:r.Country+' · '+r['Platform Granular']}}));
+  const spikePts=spikes.map(r=>({{x:r.week_ending,y:r.impressions_pct_change,r:Math.min(Math.abs(r.impressions_pct_change)/5,20),label:r.Country+' · '+r['Platform Granular']}}));
 
   charts.c10=new Chart(document.getElementById('c10'),{{
     type:'bubble',
@@ -505,12 +505,12 @@ function renderAnomalies(){{
   }});
 
   // Anomaly table
-  let h='<table><thead><tr><th>Week</th><th>Country</th><th>Platform</th><th>Posts</th><th>Impressions</th><th>Prev Week</th><th>Change</th><th>WoW %</th><th>Status</th></tr></thead><tbody>';
+  let h='<table><thead><tr><th>Week Ending</th><th>Country</th><th>Platform</th><th>Posts</th><th>Impressions</th><th>Prev Week</th><th>Change</th><th>WoW %</th><th>Status</th></tr></thead><tbody>';
   anoms.forEach(r=>{{
     const c=r.impressions_pct_change<0?'neg':'pos';
     const pill=r.impressions_pct_change<-50?'pill-r':r.impressions_pct_change<0?'pill-a':'pill-g';
     const lbl=r.impressions_pct_change<-50?'CRITICAL':r.impressions_pct_change<0?'DROP':'SPIKE';
-    h+=`<tr class="${{r.impressions_pct_change<-50?'anom-row':''}}"><td>${{r.week_start}}</td><td style="font-family:DM Sans">${{r.Country}}</td><td style="font-family:DM Sans">${{r['Platform Granular']}}</td><td>${{r.post_count}}</td><td>${{fmt(r.total_impressions)}}</td><td>${{fmt(r.prev_impressions)}}</td><td class="${{c}}">${{fmt(r.impressions_change)}}</td><td class="${{c}}">${{pct(r.impressions_pct_change)}}</td><td><span class="pill ${{pill}}">${{lbl}}</span></td></tr>`;
+    h+=`<tr class="${{r.impressions_pct_change<-50?'anom-row':''}}"><td>${{r.week_ending}}</td><td style="font-family:DM Sans">${{r.Country}}</td><td style="font-family:DM Sans">${{r['Platform Granular']}}</td><td>${{r.post_count}}</td><td>${{fmt(r.total_impressions)}}</td><td>${{fmt(r.prev_impressions)}}</td><td class="${{c}}">${{fmt(r.impressions_change)}}</td><td class="${{c}}">${{pct(r.impressions_pct_change)}}</td><td><span class="pill ${{pill}}">${{lbl}}</span></td></tr>`;
   }});
   h+='</tbody></table>';
   document.getElementById('anom-tbl').innerHTML=h;
@@ -520,7 +520,7 @@ function renderAnomalies(){{
 let sortC=null,sortD='desc';
 function renderRaw(){{
   const cols=[
-    {{k:'week_start',l:'Week'}},{{k:'Country',l:'Country'}},{{k:'Platform Granular',l:'Platform'}},
+    {{k:'week_ending',l:'Week Ending'}},{{k:'Country',l:'Country'}},{{k:'Platform Granular',l:'Platform'}},
     {{k:'post_count',l:'Posts'}},{{k:'total_impressions',l:'Impressions'}},{{k:'avg_impressions_per_post',l:'Avg/Post'}},
     {{k:'prev_impressions',l:'Prev Imp'}},{{k:'impressions_change',l:'Change'}},{{k:'impressions_pct_change',l:'WoW %'}}
   ];
@@ -547,7 +547,7 @@ function doSort(c){{if(sortC===c)sortD=sortD==='asc'?'desc':'asc';else{{sortC=c;
 
 // ══════ EXPORT ══════
 function exportCSV(){{
-  const hs=['week_start','Country','Platform Granular','post_count','total_impressions','avg_impressions_per_post','prev_impressions','impressions_change','impressions_pct_change'];
+  const hs=['week_ending','Country','Platform Granular','post_count','total_impressions','avg_impressions_per_post','prev_impressions','impressions_change','impressions_pct_change'];
   let csv=hs.join(',')+`\\n`;
   filtered.forEach(r=>{{csv+=hs.map(h=>r[h]??'').join(',')+`\\n`}});
   const b=new Blob([csv],{{type:'text/csv'}});const a=document.createElement('a');
@@ -572,10 +572,10 @@ if __name__ == '__main__':
     print("\nGenerating dashboard...")
     html = generate_html(df)
 
-    output_file = 'wow_dashboard.html'
+    output_file = 'index.html'
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(html)
 
     print(f"\n✅ Dashboard saved to: {output_file}")
-    print(f"   Open in browser or rename to index.html for GitHub Pages")
+    print(f"   Open in browser or push to GitHub Pages")
     print(f"   {len(df)} rows · {df['Country'].nunique()} countries · {df['Platform Granular'].nunique()} platforms")

@@ -34,9 +34,6 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: python wow_dashboard.py
 
-      - name: Copy to index.html
-        run: cp wow_dashboard.html index.html
-
       - name: Commit and push
         run: |
           git config user.name "GitHub Actions Bot"
