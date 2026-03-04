@@ -87,6 +87,14 @@ td.pos{color:var(--green)}td.neg{color:var(--red)}
 .anom-row td{background:rgba(239,68,68,0.03)}
 
 @media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}.kpi-row{grid-template-columns:repeat(3,1fr)}}
+
+/* Coverage heatmap */
+.cov-miss{background:rgba(239,68,68,0.15);color:var(--red);text-align:center;font-weight:600}
+.cov-low{background:rgba(245,158,11,0.1);color:var(--amber);text-align:center}
+.cov-mid{background:rgba(59,130,246,0.08);color:var(--accent);text-align:center}
+.cov-high{background:rgba(16,185,129,0.1);color:var(--green);text-align:center}
+.cov-head{font-size:9px;min-width:70px;text-align:center}
+.cov-dim{position:sticky;left:0;background:var(--surface-2);z-index:5;font-family:'DM Sans',sans-serif;font-weight:600;min-width:140px}
 </style>
 </head>
 <body>
@@ -96,7 +104,7 @@ td.pos{color:var(--green)}td.neg{color:var(--red)}
     <h1>CORE Pipeline <span>— Week on Week Analysis</span></h1>
   </div>
   <div style="display:flex;align-items:center;gap:10px">
-    <span class="badge">2026-03-04 18:46</span>
+    <span class="badge">2026-03-04 19:01</span>
     <span class="badge badge-green">Live DB</span>
   </div>
 </div>
@@ -164,6 +172,16 @@ td.pos{color:var(--green)}td.neg{color:var(--red)}
     <div class="card full"><h3>Anomaly Timeline</h3><div class="sub">Red dots = drops · Green dots = spikes · size = magnitude</div><div class="cw tall"><canvas id="c10"></canvas></div></div>
   </div>
   <div class="tc"><div class="ts" id="anom-tbl"></div></div>
+
+  <!-- Section: Data Coverage -->
+  <div class="sh"><span class="dot" style="background:var(--amber)"></span>Platform Data Coverage</div>
+  <div class="sub-note" style="font-size:11px;color:var(--text-dim);margin:-10px 0 14px 15px">Rows = Platform Granular · Columns = Week Ending · Cells = post count (colored by impressions) · Red = missing data</div>
+  <div class="tc"><div class="ts" id="coverage-tbl" style="max-height:600px"></div></div>
+
+  <!-- Section: Country Data Coverage -->
+  <div class="sh"><span class="dot" style="background:var(--amber)"></span>Country Data Coverage</div>
+  <div class="sub-note" style="font-size:11px;color:var(--text-dim);margin:-10px 0 14px 15px">Rows = Country · Columns = Week Ending · Cells = post count (colored by impressions) · Red = missing data</div>
+  <div class="tc"><div class="ts" id="coverage-co-tbl" style="max-height:600px"></div></div>
 
   <!-- Section: Full WoW Table -->
   <div class="sh"><span class="dot" style="background:var(--text-muted)"></span>Full WoW Data</div>
@@ -240,7 +258,7 @@ function go(){
     filtered=filtered.filter(r=>ws.has(r.week_ending));
   }
 
-  renderKPIs();renderAggregate();renderPlatform();renderCountry();renderAnomalies();renderRaw();
+  renderKPIs();renderAggregate();renderPlatform();renderCountry();renderAnomalies();renderCoverage();renderRaw();
 }
 
 // ── Week aggregation helpers ──
@@ -414,6 +432,57 @@ function renderAnomalies(){
   });
   h+='</tbody></table>';
   document.getElementById('anom-tbl').innerHTML=h;
+}
+
+// ══════ DATA COVERAGE ══════
+function renderCoverage(){
+  const allWks=[...new Set(filtered.map(r=>r.week_ending))].sort();
+  const platforms=[...new Set(filtered.map(r=>r['Platform Granular']))].sort();
+  const countries=[...new Set(filtered.map(r=>r.Country))].sort();
+
+  // Build lookup: dim -> week -> {posts, imp}
+  function buildLookup(dimKey){
+    const m={};
+    filtered.forEach(r=>{
+      const d=r[dimKey]||'Unknown', w=r.week_ending;
+      if(!m[d])m[d]={};
+      if(!m[d][w])m[d][w]={posts:0,imp:0};
+      m[d][w].posts+=(r.post_count||0);
+      m[d][w].imp+=(r.total_impressions||0);
+    });
+    return m;
+  }
+
+  function covClass(imp){
+    if(imp>=1000000) return 'cov-high';
+    if(imp>=100000) return 'cov-mid';
+    return 'cov-low';
+  }
+
+  function renderTable(dims, lookup, targetId){
+    let h='<table><thead><tr><th class="cov-dim">Name</th>';
+    allWks.forEach(w=>{h+=`<th class="cov-head">${w.slice(5)}</th>`});
+    h+='</tr></thead><tbody>';
+
+    dims.forEach(dim=>{
+      h+=`<tr><td class="cov-dim">${dim}</td>`;
+      allWks.forEach(w=>{
+        const cell=lookup[dim]?.[w];
+        if(!cell||cell.posts===0){
+          h+=`<td class="cov-miss">✗</td>`;
+        }else{
+          h+=`<td class="${covClass(cell.imp)}" title="${fmt(cell.imp)} impressions">${cell.posts}</td>`;
+        }
+      });
+      h+='</tr>';
+    });
+
+    h+='</tbody></table>';
+    document.getElementById(targetId).innerHTML=h;
+  }
+
+  renderTable(platforms, buildLookup('Platform Granular'), 'coverage-tbl');
+  renderTable(countries, buildLookup('Country'), 'coverage-co-tbl');
 }
 
 // ══════ RAW TABLE ══════
