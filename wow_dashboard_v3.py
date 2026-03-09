@@ -163,6 +163,7 @@ SELECT
     "Country",
     "Platform Granular",
     "Delivery",
+    "Account",
     COUNT(*) AS total_rows,
     SUM(CASE WHEN "Total Impressions" IS NULL THEN 1 ELSE 0 END) AS null_impressions,
     SUM(CASE WHEN "Total Impressions" IS NOT NULL THEN 1 ELSE 0 END) AS has_impressions,
@@ -186,7 +187,7 @@ SELECT
     SUM(CASE WHEN author_name IS NULL OR author_name = '' THEN 1 ELSE 0 END) AS null_author
 FROM sprinklr_table
 WHERE "Date" IS NOT NULL
-GROUP BY 1, 2, 3, 4
+GROUP BY 1, 2, 3, 4, 5
 ORDER BY 1 DESC, 2, 3
 """
 
@@ -520,6 +521,8 @@ td.pos{{color:var(--green)}}td.neg{{color:var(--red)}}
       <div class="filter-sep"></div>
       <label>Platform</label><select id="q-pl"><option value="ALL">All</option></select>
       <div class="filter-sep"></div>
+      <label>Account</label><select id="q-ac"><option value="ALL">All</option></select>
+      <div class="filter-sep"></div>
       <label>Delivery</label><select id="q-dl"><option value="ALL">All</option></select>
       <div class="filter-sep"></div>
       <label>Duration</label>
@@ -562,6 +565,14 @@ td.pos{{color:var(--green)}}td.neg{{color:var(--red)}}
       <div class="card"><h3>Rows by Platform per Week</h3><div class="sub">Stacked — is any platform dropping off?</div><div class="cw tall"><canvas id="qc5"></canvas></div></div>
       <div class="card"><h3>Rows by Country per Week</h3><div class="sub">Stacked — is any country missing?</div><div class="cw tall"><canvas id="qc6"></canvas></div></div>
     </div>
+    <div class="grid2">
+      <div class="card"><h3>Rows by Account per Week</h3><div class="sub">Stacked — is any account dropping off?</div><div class="cw tall"><canvas id="qc7"></canvas></div></div>
+      <div class="card"><h3>Impressions by Account per Week</h3><div class="sub">Stacked — impression share per account</div><div class="cw tall"><canvas id="qc8"></canvas></div></div>
+    </div>
+
+    <div class="sh"><span class="dot" style="background:var(--amber)"></span>Impressions Flow by Account (✓ / ✗)</div>
+    <div class="sub-note" style="font-size:11px;color:var(--text-dim);margin:-10px 0 14px 15px">Does each account have impression data each week? Green ✓ = has data · Red ✗ = missing</div>
+    <div class="tc"><div class="ts" id="q-flow-ac" style="max-height:600px"></div></div>
 
     <div class="sh"><span class="dot" style="background:var(--cyan)"></span>Impressions Flow by Country (✓ / ✗)</div>
     <div class="tc"><div class="ts" id="q-flow-co" style="max-height:600px"></div></div>
@@ -830,11 +841,13 @@ let qFiltered=QAL;
 function applyQuality(){{
   const co=document.getElementById('q-co').value;
   const pl=document.getElementById('q-pl').value;
+  const ac=document.getElementById('q-ac').value;
   const dl=document.getElementById('q-dl').value;
   const wk=parseInt(document.getElementById('q-dur').value);
   qFiltered=QAL.filter(r=>{{
     if(co!=='ALL'&&r.Country!==co)return false;
     if(pl!=='ALL'&&r['Platform Granular']!==pl)return false;
+    if(ac!=='ALL'&&r.Account!==ac)return false;
     if(dl!=='ALL'&&r.Delivery!==dl)return false;
     return true;
   }});
@@ -918,6 +931,31 @@ function renderQuality(){{
   }});
   ft+='</tbody></table>';
   document.getElementById('q-flow').innerHTML=ft;
+
+  // ── Account Flow ──
+  const acFlow={{}};
+  qFiltered.forEach(r=>{{
+    const ac=r.Account||'?',w=r.week_ending;
+    if(!acFlow[ac])acFlow[ac]={{}};
+    if(!acFlow[ac][w])acFlow[ac][w]={{rows:0,imp:0}};
+    acFlow[ac][w].rows+=(r.has_impressions||0);
+    acFlow[ac][w].imp+=(r.sum_impressions||0);
+  }});
+  const acs=Object.keys(acFlow).sort();
+  let at='<table><thead><tr><th class="cov-dim">Account</th>';
+  allWks.forEach(w=>{{at+=`<th class="cov-head">${{w.slice(5)}}</th>`}});
+  at+='</tr></thead><tbody>';
+  acs.forEach(ac=>{{
+    at+=`<tr><td class="cov-dim">${{ac}}</td>`;
+    allWks.forEach(w=>{{
+      const c=acFlow[ac]?.[w];
+      if(!c||c.rows===0)at+=`<td class="cross">✗</td>`;
+      else at+=`<td class="tick" title="${{fmt(c.imp)}}">✓</td>`;
+    }});
+    at+='</tr>';
+  }});
+  at+='</tbody></table>';
+  document.getElementById('q-flow-ac').innerHTML=at;
 
   // ── Country Flow ──
   const coFlow={{}};
@@ -1045,6 +1083,39 @@ function renderQuality(){{
       backgroundColor:C[(i+7)%C.length]+'88',borderColor:C[(i+7)%C.length],borderWidth:1,borderRadius:2
     }}))
   }},options:{{...bOpts('Rows',true),plugins:{{legend:{{display:true,position:'top',labels:{{color:'#8492a6',font:{{family:'DM Sans',size:9}},boxWidth:10,padding:4}}}}}}}}}});
+
+  // Chart 7: Rows by Account stacked bar
+  dc('qc7');
+  const acByW={{}};
+  qFiltered.forEach(r=>{{
+    const ac=r.Account||'?',w=r.week_ending;
+    if(!acByW[w])acByW[w]={{}};
+    acByW[w][ac]=(acByW[w][ac]||0)+(r.total_rows||0);
+  }});
+  const qAcs2=[...new Set(qFiltered.map(r=>r.Account))].sort();
+  charts.qc7=new Chart(document.getElementById('qc7'),{{type:'bar',data:{{
+    labels:allWks.map(w=>new Date(w)),
+    datasets:qAcs2.map((ac,i)=>({{
+      label:ac,data:allWks.map(w=>acByW[w]?.[ac]||0),
+      backgroundColor:C[(i+3)%C.length]+'88',borderColor:C[(i+3)%C.length],borderWidth:1,borderRadius:2
+    }}))
+  }},options:{{...bOpts('Rows',true),plugins:{{legend:{{display:true,position:'top',labels:{{color:'#8492a6',font:{{family:'DM Sans',size:9}},boxWidth:10,padding:4}}}}}}}}}});
+
+  // Chart 8: Impressions by Account stacked bar
+  dc('qc8');
+  const acImpByW={{}};
+  qFiltered.forEach(r=>{{
+    const ac=r.Account||'?',w=r.week_ending;
+    if(!acImpByW[w])acImpByW[w]={{}};
+    acImpByW[w][ac]=(acImpByW[w][ac]||0)+(r.sum_impressions||0);
+  }});
+  charts.qc8=new Chart(document.getElementById('qc8'),{{type:'bar',data:{{
+    labels:allWks.map(w=>new Date(w)),
+    datasets:qAcs2.map((ac,i)=>({{
+      label:ac,data:allWks.map(w=>acImpByW[w]?.[ac]||0),
+      backgroundColor:C[(i+3)%C.length]+'88',borderColor:C[(i+3)%C.length],borderWidth:1,borderRadius:2
+    }}))
+  }},options:{{...bOpts('Impressions',true),plugins:{{legend:{{display:true,position:'top',labels:{{color:'#8492a6',font:{{family:'DM Sans',size:9}},boxWidth:10,padding:4}}}}}}}}}});
 
   // ── Delivery Breakdown ──
   const dlByW={{}};
@@ -1240,7 +1311,7 @@ function exportWow(){{
   a.href=URL.createObjectURL(b);a.download=`wow_${{new Date().toISOString().slice(0,10)}}.csv`;a.click();
 }}
 function exportQuality(){{
-  const hs=['week_ending','Country','Platform Granular','Delivery','total_rows','null_impressions','has_impressions','sum_impressions','null_country','null_platform','null_delivery','null_account','null_permalink','null_benchmark','null_matcher','null_rep_topic','null_rep_sub','null_post_msg','null_campaign','null_region','null_msg_type','null_post_format','null_matcher_col','null_content_cat','null_author'];
+  const hs=['week_ending','Country','Platform Granular','Delivery','Account','total_rows','null_impressions','has_impressions','sum_impressions','null_country','null_platform','null_delivery','null_account','null_permalink','null_benchmark','null_matcher','null_rep_topic','null_rep_sub','null_post_msg','null_campaign','null_region','null_msg_type','null_post_format','null_matcher_col','null_content_cat','null_author'];
   let csv=hs.join(',')+`\\n`;
   qFiltered.forEach(r=>{{csv+=hs.map(h=>r[h]??'').join(',')+`\\n`}});
   const b=new Blob([csv],{{type:'text/csv'}});const a=document.createElement('a');
@@ -1266,9 +1337,11 @@ function init(){{
   const qCos=[...new Set(QAL.map(r=>r.Country))].sort();
   const qPls=[...new Set(QAL.map(r=>r['Platform Granular']))].sort();
   const qDls=[...new Set(QAL.map(r=>r.Delivery))].sort();
+  const qAcs=[...new Set(QAL.map(r=>r.Account))].sort();
   qCos.forEach(c=>{{document.getElementById('q-co').innerHTML+=`<option>${{c}}</option>`}});
   qPls.forEach(p=>{{document.getElementById('q-pl').innerHTML+=`<option>${{p}}</option>`}});
   qDls.forEach(d=>{{document.getElementById('q-dl').innerHTML+=`<option>${{d}}</option>`}});
+  qAcs.forEach(a=>{{document.getElementById('q-ac').innerHTML+=`<option>${{a}}</option>`}});
 
   // Populate LINE & Collab filters
   const lcCos=[...new Set(LCR.map(r=>r.Country))].sort();
